@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: Apache-2.0
+module noqeri.http
+
+extern function httpRequest(method: string, url: string, body: string): string
+extern function httpLastStatus(): int
+
+export function httpStatusClass(status: int): int {
+    if status < 100 || status > 599 { return 0 }
+    return status / 100
+}
+export function httpIsSuccess(status: int): bool { return status >= 200 && status <= 299 }
+export function httpIsRedirect(status: int): bool { return status >= 300 && status <= 399 }
+export function httpIsClientError(status: int): bool { return status >= 400 && status <= 499 }
+export function httpIsServerError(status: int): bool { return status >= 500 && status <= 599 }
+
+export function httpHeaderNameByteValid(c: u8): bool {
+    if c >= 65 as u8 && c <= 90 as u8 || c >= 97 as u8 && c <= 122 as u8 || c >= 48 as u8 && c <= 57 as u8 { return true }
+    return c == 45 as u8 || c == 95 as u8 || c == 33 as u8 || c == 35 as u8 || c == 36 as u8 || c == 37 as u8 || c == 38 as u8 || c == 39 as u8 || c == 42 as u8 || c == 43 as u8 || c == 94 as u8 || c == 96 as u8 || c == 124 as u8 || c == 126 as u8
+}
+export function httpHeaderValueValid(value: []u8): bool {
+    let i: usize = 0 as usize
+    while i < len(value) {
+        if value[i] == 0 as u8 || value[i] == 10 as u8 || value[i] == 13 as u8 { return false }
+        i = i + 1 as usize
+    }
+    return true
+}
+export function httpRequestMethodValid(method: string): bool {
+    return method == "GET" || method == "POST" || method == "PUT" || method == "PATCH" || method == "DELETE" || method == "HEAD"
+}
+export function httpResponseBodyAllowed(status: int): bool { return status != 204 && status != 304 && (status < 100 || status >= 200) }
+export function httpRequestSafe(method: string, url: string): string {
+    if !httpRequestMethodValid(method) || len(url) == 0 as usize || len(url) > 4096 as usize { return "" }
+    return httpRequest(method, url, "")
+}
+export function httpStatus(): int { return httpLastStatus() }
+

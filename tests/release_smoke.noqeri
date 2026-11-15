@@ -1,0 +1,14 @@
+import "../src/http.noqeri"
+
+function require(ok: bool): void {
+    if !ok { let invalid: *u8 = 0 as *u8 print(invalid[0]) }
+}
+
+require(httpStatusClass(200) == 2)
+require(httpIsSuccess(204))
+require(httpIsRedirect(302))
+require(httpIsClientError(404))
+require(httpIsServerError(503))
+require(!httpHeaderValueValid([10 as u8]))
+print("noqeri-http package tests: OK")
+
