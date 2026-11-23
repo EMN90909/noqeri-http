@@ -8,3 +8,7 @@ package {
     license: "Apache-2.0"
 }
 
+dependencies {
+    net: "noqeri/net@1.0.0"
+    std_io: "noqeri/std-io@1.0.0"
+}

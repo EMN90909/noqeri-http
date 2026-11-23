@@ -1,9 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 module noqeri.http
 
-extern function httpRequest(method: string, url: string, body: string): string
-extern function httpLastStatus(): int
+record HttpParsedRequest {
+    valid: bool
+    methodCode: int
+    pathStart: usize
+    pathLen: usize
+    queryStart: usize
+    queryLen: usize
+    headerCount: usize
+    bodyStart: usize
+    bodyLen: usize
+}
 
+export function httpStatus(): int { return 200 }
 export function httpStatusClass(status: int): int {
     if status < 100 || status > 599 { return 0 }
     return status / 100
@@ -17,6 +27,7 @@ export function httpHeaderNameByteValid(c: u8): bool {
     if c >= 65 as u8 && c <= 90 as u8 || c >= 97 as u8 && c <= 122 as u8 || c >= 48 as u8 && c <= 57 as u8 { return true }
     return c == 45 as u8 || c == 95 as u8 || c == 33 as u8 || c == 35 as u8 || c == 36 as u8 || c == 37 as u8 || c == 38 as u8 || c == 39 as u8 || c == 42 as u8 || c == 43 as u8 || c == 94 as u8 || c == 96 as u8 || c == 124 as u8 || c == 126 as u8
 }
+
 export function httpHeaderValueValid(value: []u8): bool {
     let i: usize = 0 as usize
     while i < len(value) {
@@ -25,13 +36,194 @@ export function httpHeaderValueValid(value: []u8): bool {
     }
     return true
 }
-export function httpRequestMethodValid(method: string): bool {
-    return method == "GET" || method == "POST" || method == "PUT" || method == "PATCH" || method == "DELETE" || method == "HEAD"
-}
-export function httpResponseBodyAllowed(status: int): bool { return status != 204 && status != 304 && (status < 100 || status >= 200) }
-export function httpRequestSafe(method: string, url: string): string {
-    if !httpRequestMethodValid(method) || len(url) == 0 as usize || len(url) > 4096 as usize { return "" }
-    return httpRequest(method, url, "")
-}
-export function httpStatus(): int { return httpLastStatus() }
 
+export function httpHeaderNameValid(name: []u8): bool {
+    if len(name) == 0 as usize || len(name) > 128 as usize { return false }
+    let i: usize = 0 as usize
+    while i < len(name) {
+        if !httpHeaderNameByteValid(name[i]) { return false }
+        i = i + 1 as usize
+    }
+    return true
+}
+
+export function httpHeaderCheckPair(name: []u8, value: []u8): bool {
+    return httpHeaderNameValid(name) && httpHeaderValueValid(value)
+}
+
+export function httpRequestMethodBytesValid(method: []u8): bool {
+    let n: usize = len(method)
+    if n == 3 as usize {
+        if method[0] == 71 as u8 && method[1] == 69 as u8 && method[2] == 84 as u8 { return true }
+        return method[0] == 80 as u8 && method[1] == 85 as u8 && method[2] == 84 as u8
+    }
+    if n == 4 as usize {
+        if method[0] == 80 as u8 && method[1] == 79 as u8 && method[2] == 83 as u8 && method[3] == 84 as u8 { return true }
+        return method[0] == 72 as u8 && method[1] == 69 as u8 && method[2] == 65 as u8 && method[3] == 68 as u8
+    }
+    if n == 5 as usize {
+        return method[0] == 80 as u8 && method[1] == 65 as u8 && method[2] == 84 as u8 && method[3] == 67 as u8 && method[4] == 72 as u8
+    }
+    if n == 6 as usize {
+        return method[0] == 68 as u8 && method[1] == 69 as u8 && method[2] == 76 as u8 && method[3] == 69 as u8 && method[4] == 84 as u8 && method[5] == 69 as u8
+    }
+    if n == 7 as usize {
+        return method[0] == 79 as u8 && method[1] == 80 as u8 && method[2] == 84 as u8 && method[3] == 73 as u8 && method[4] == 79 as u8 && method[5] == 78 as u8 && method[6] == 83 as u8
+    }
+    return false
+}
+
+export function httpRequestMethodValid(method: string): bool {
+    let n: usize = textLength(method)
+    return n >= 3 as usize && n <= 7 as usize
+}
+
+export function httpResponseBodyAllowed(status: int): bool {
+    return status != 204 && status != 304 && (status < 100 || status >= 200)
+}
+
+export function httpMethodCode(raw: []u8, start: usize, count: usize): int {
+    if start + count > len(raw) { return 0 }
+    if count == 3 as usize && raw[start] == 71 as u8 && raw[start + 1 as usize] == 69 as u8 && raw[start + 2 as usize] == 84 as u8 { return 1 } // GET
+    if count == 4 as usize && raw[start] == 80 as u8 && raw[start + 1 as usize] == 79 as u8 && raw[start + 2 as usize] == 83 as u8 && raw[start + 3 as usize] == 84 as u8 { return 2 } // POST
+    if count == 3 as usize && raw[start] == 80 as u8 && raw[start + 1 as usize] == 85 as u8 && raw[start + 2 as usize] == 84 as u8 { return 3 } // PUT
+    if count == 4 as usize && raw[start] == 72 as u8 && raw[start + 1 as usize] == 69 as u8 && raw[start + 2 as usize] == 65 as u8 && raw[start + 3 as usize] == 68 as u8 { return 4 } // HEAD
+    if count == 6 as usize && raw[start] == 68 as u8 && raw[start + 1 as usize] == 69 as u8 && raw[start + 2 as usize] == 76 as u8 { return 5 } // DELETE
+    return 0
+}
+
+export function httpParseRequest(raw: []u8, out: *HttpParsedRequest): bool {
+    out.valid = false
+    out.methodCode = 0
+    out.pathStart = 0 as usize
+    out.pathLen = 0 as usize
+    out.queryStart = 0 as usize
+    out.queryLen = 0 as usize
+    out.headerCount = 0 as usize
+    out.bodyStart = len(raw)
+    out.bodyLen = 0 as usize
+
+    let i: usize = 0 as usize
+    while i < len(raw) && raw[i] != 32 as u8 {
+        if raw[i] == 13 as u8 || raw[i] == 10 as u8 { return false }
+        i = i + 1 as usize
+    }
+    let mCode: int = httpMethodCode(raw, 0 as usize, i)
+    if mCode == 0 || i >= len(raw) { return false }
+    out.methodCode = mCode
+    i = i + 1 as usize
+    let targetStart: usize = i
+    let qPos: usize = len(raw)
+    while i < len(raw) && raw[i] != 32 as u8 {
+        if raw[i] == 13 as u8 || raw[i] == 10 as u8 || raw[i] == 0 as u8 { return false }
+        if raw[i] == 63 as u8 && qPos == len(raw) { qPos = i }
+        i = i + 1 as usize
+    }
+    if i <= targetStart || raw[targetStart] != 47 as u8 { return false }
+    out.pathStart = targetStart
+    if qPos < i {
+        out.pathLen = qPos - targetStart
+        out.queryStart = qPos + 1 as usize
+        out.queryLen = i - (qPos + 1 as usize)
+    } else {
+        out.pathLen = i - targetStart
+    }
+
+    // Require " HTTP/1.x\r\n"
+    if i + 10 as usize >= len(raw) || raw[i + 1 as usize] != 72 as u8 || raw[i + 2 as usize] != 84 as u8 { return false }
+    while i < len(raw) && raw[i] != 10 as u8 {
+        if raw[i] == 13 as u8 && (i + 1 as usize >= len(raw) || raw[i + 1 as usize] != 10 as u8) { return false }
+        i = i + 1 as usize
+    }
+    if i >= len(raw) || i == 0 as usize || raw[i - 1 as usize] != 13 as u8 { return false }
+    i = i + 1 as usize
+
+    while i < len(raw) {
+        if i + 1 as usize < len(raw) && raw[i] == 13 as u8 && raw[i + 1 as usize] == 10 as u8 {
+            out.bodyStart = i + 2 as usize
+            out.bodyLen = len(raw) - out.bodyStart
+            out.valid = true
+            return true
+        }
+        let lineStart: usize = i
+        let colon: usize = len(raw)
+        while i < len(raw) && raw[i] != 13 as u8 {
+            if raw[i] == 10 as u8 || raw[i] == 0 as u8 { return false }
+            if raw[i] == 58 as u8 && colon == len(raw) { colon = i }
+            i = i + 1 as usize
+        }
+        if i + 1 as usize >= len(raw) || raw[i + 1 as usize] != 10 as u8 { return false }
+        if colon == len(raw) || colon == lineStart { return false }
+        let k: usize = lineStart
+        while k < colon {
+            if !httpHeaderNameByteValid(raw[k]) { return false }
+            k = k + 1 as usize
+        }
+        out.headerCount = out.headerCount + 1 as usize
+        if out.headerCount > 64 as usize { return false }
+        i = i + 2 as usize
+    }
+    return false
+}
+
+export function httpRouteMatch(pattern: []u8, path: []u8): bool {
+    let pi: usize = 0 as usize
+    let si: usize = 0 as usize
+    while pi < len(pattern) && si < len(path) {
+        if pattern[pi] == 58 as u8 { // :param segment
+            while pi < len(pattern) && pattern[pi] != 47 as u8 { pi = pi + 1 as usize }
+            if si >= len(path) || path[si] == 47 as u8 { return false }
+            while si < len(path) && path[si] != 47 as u8 { si = si + 1 as usize }
+        } else {
+            if pattern[pi] != path[si] { return false }
+            pi = pi + 1 as usize
+            si = si + 1 as usize
+        }
+    }
+    return pi == len(pattern) && si == len(path)
+}
+
+export function httpFindQueryParam(query: []u8, key: []u8, outStart: *usize, outLen: *usize): bool {
+    let i: usize = 0 as usize
+    while i < len(query) {
+        let eqPos: usize = len(query)
+        let ampPos: usize = len(query)
+        let j: usize = i
+        while j < len(query) {
+            if query[j] == 38 as u8 { ampPos = j break }
+            if query[j] == 61 as u8 && eqPos == len(query) { eqPos = j }
+            j = j + 1 as usize
+        }
+        if eqPos < ampPos && eqPos - i == len(key) {
+            let ok: bool = true
+            let k: usize = 0 as usize
+            while k < len(key) {
+                if query[i + k] != key[k] { ok = false break }
+                k = k + 1 as usize
+            }
+            if ok {
+                outStart[0 as usize] = eqPos + 1 as usize
+                outLen[0 as usize] = ampPos - (eqPos + 1 as usize)
+                return true
+            }
+        }
+        i = ampPos + 1 as usize
+    }
+    return false
+}
+
+export function httpFormatStatusLine(status: int, dst: []u8): usize {
+    if len(dst) < 13 as usize { return 0 as usize }
+    // "HTTP/1.1 XXX\r\n"
+    dst[0] = 72 as u8 dst[1] = 84 as u8 dst[2] = 84 as u8 dst[3] = 80 as u8
+    dst[4] = 47 as u8 dst[5] = 49 as u8 dst[6] = 46 as u8 dst[7] = 49 as u8
+    dst[8] = 32 as u8
+    let s: int = status
+    if s < 100 || s > 599 { s = 500 }
+    dst[9] = (48 + (s / 100)) as u8
+    dst[10] = (48 + ((s / 10) % 10)) as u8
+    dst[11] = (48 + (s % 10)) as u8
+    dst[12] = 13 as u8
+    if len(dst) > 13 as usize { dst[13] = 10 as u8 return 14 as usize }
+    return 0 as usize
+}
